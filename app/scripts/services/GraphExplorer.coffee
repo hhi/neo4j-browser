@@ -84,18 +84,20 @@ angular.module('neo4jApp.services')
           q.promise
 
         internalRelationships: (graph, existingNodes, newNodes) ->
+          bolt = window.neo4j.v1
           q = $q.defer()
           if newNodes.length is 0
             q.resolve()
             return q.promise
-          newNodeIds = newNodes.map((node) -> node.id)
-          existingNodeIds = existingNodes.map((node) -> node.id).concat(newNodeIds)
+          mapIds = (node) -> if bolt.isInt node.id then node.id else parseInt(node.id)
+          newNodeIds = newNodes.map(mapIds)
+          existingNodeIds = existingNodes.map(mapIds).concat(newNodeIds)
           Cypher.transaction()
           .commit("""
-            MATCH (a)-[r]-(b) WHERE id(a) IN[#{existingNodeIds.join(',')}]
-            AND id(b) IN[#{newNodeIds.join(',')}]
+            MATCH (a)-[r]->(b) WHERE id(a) IN {node_ids}
+            AND id(b) IN {new_node_ids}
             RETURN r;"""
-          )
+          , {node_ids: existingNodeIds, new_node_ids: newNodeIds})
           .then (result) =>
             graph.addInternalRelationships(result.relationships.map(CypherGraphModel.convertRelationship(graph)))
             q.resolve()

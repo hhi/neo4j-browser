@@ -241,6 +241,9 @@ var Connection = (function () {
         if (buf.hasRemaining()) {
           self._dechunker.write(buf.readSlice(buf.remaining()));
         }
+      } else if (proposed == 1213486160) {
+        //server responded 1213486160 == 0x48545450 == "HTTP"
+        self._handleFatalError((0, _error.newError)("Server responded HTTP. Make sure you are not trying to connect to the http endpoint " + "(HTTP defaults to port 7474 whereas BOLT defaults to port 7687)"));
       } else {
         self._handleFatalError((0, _error.newError)("Unknown Bolt protocol version: " + proposed));
       }
@@ -403,7 +406,19 @@ var Connection = (function () {
   }, {
     key: "reset",
     value: function reset(observer) {
-      this._queueObserver(observer);
+      this._isHandlingFailure = true;
+      var self = this;
+      var wrappedObs = {
+        onNext: observer ? observer.onNext : NO_OP,
+        onError: observer ? observer.onError : NO_OP,
+        onCompleted: function onCompleted() {
+          self._isHandlingFailure = false;
+          if (observer) {
+            observer.onCompleted();
+          }
+        }
+      };
+      this._queueObserver(wrappedObs);
       this._packer.packStruct(RESET);
       this._chunker.messageBoundary();
     }
@@ -475,7 +490,7 @@ function connect(url) {
     host: host(url),
     port: port(url) || 7687,
     // Default to using encryption if trust-on-first-use is available
-    encrypted: config.encrypted || (0, _features2["default"])("trust_on_first_use"),
+    encrypted: config.encrypted == null ? (0, _features2["default"])("trust_on_first_use") : config.encrypted,
     // Default to using trust-on-first-use if it is available
     trust: config.trust || ((0, _features2["default"])("trust_on_first_use") ? "TRUST_ON_FIRST_USE" : "TRUST_SIGNED_CERTIFICATES"),
     trustedCertificates: config.trustedCertificates || [],

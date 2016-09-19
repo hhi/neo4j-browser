@@ -38,7 +38,9 @@ angular.module('neo4jApp.controllers')
       'Utils'
       'CurrentUser'
       'ProtocolFactory'
-      ($scope, $window,$q, Server, Frame, AuthService, AuthDataService, ConnectionStatusService, Settings, SettingsStore, motdService, UDC, Utils, CurrentUser, ProtocolFactory) ->
+      'Features'
+      ($scope, $window, $q, Server, Frame, AuthService, AuthDataService, ConnectionStatusService, Settings, SettingsStore, motdService, UDC, Utils, CurrentUser, ProtocolFactory, Features) ->
+        $scope.features = Features
         $scope.CurrentUser = CurrentUser
         $scope.ConnectionStatusService = ConnectionStatusService
         initailConnect = yes
@@ -50,24 +52,52 @@ angular.module('neo4jApp.controllers')
           $scope.host = $window.location.host
           $q.when()
           .then( ->
-            ProtocolFactory.getMetaService().getMeta().then((res) ->
+            ProtocolFactory.getStoredProcedureService().getProceduresList().then((procedures) ->
+              $scope.procedures = procedures
+            )
+          )
+          .then( ->
+            ProtocolFactory.getStoredProcedureService().getMeta().then((res) ->
               $scope.labels = res.labels
               $scope.relationships = res.relationships
               $scope.propertyKeys = res.propertyKeys
             )
           ).then( ->
-            ProtocolFactory.getVersionService().getVersion($scope.version).then((res) ->
+            ProtocolFactory.getStoredProcedureService().getVersion($scope.version).then((res) ->
               $scope.version = res
             )
           ).then( ->
             fetchJMX()
+          ).then( ->
+            featureCheck()
           )
 
+        featureCheck = ->
+          if 'dbms.security.listUsers' in $scope.procedures
+            ProtocolFactory.getStoredProcedureService().getUser().then((res) ->
+              $scope.user = res
+              Features.showAdmin = 'admin' in res.roles
+            )
+          else
+            $scope.user = $scope.static_user
+
+          if 'dbms.security.listRoles' in $scope.procedures
+            Features.canGetRoles = yes
+          else
+            Features.canGetRoles = no
+
+          if 'dbms.security.activateUser' in $scope.procedures
+            Features.canActivateUser = yes
+          else
+            Features.canActivateUser = no
+
+          Features.usingCoreEdge = 'dbms.cluster.overview' in $scope.procedures
+
         fetchJMX = ->
-          ProtocolFactory.getJmxService().getJmx([
-            "org.neo4j:instance=kernel#0,name=Configuration"
-            "org.neo4j:instance=kernel#0,name=Kernel"
-            "org.neo4j:instance=kernel#0,name=Store file sizes"
+          ProtocolFactory.getStoredProcedureService().getJmx([
+            "*:*,name=Configuration"
+            "*:*,name=Kernel"
+            "*:*,name=Store file sizes"
           ]).then((response) ->
             for r in response.data
               for a in r.attributes
@@ -141,16 +171,32 @@ angular.module('neo4jApp.controllers')
           setAndSaveSetting('onboarding', false)
 
         pickFirstFrame = ->
-          CurrentUser.init()
-          AuthService.hasValidAuthorization(retainConnection = yes).then(
-            ->
-              Frame.closeWhere "#{Settings.cmdchar}server connect"
-              Frame.create({input:"#{Settings.initCmd}"})
-              onboardingSequence() if Settings.onboarding
-            ,
-            (r) ->
-              if Settings.onboarding then onboardingSequence()
-              else Frame.create({input:"#{Settings.cmdchar}server connect"})
+          $q.when()
+          .then(->
+            Server.addresses()
+            .then(
+              (r) ->
+                r = r.data
+                if r.bolt? and Settings.boltHost is ""
+                  $scope.boltHost = r.bolt.replace('bolt://', '')
+                else
+                  $scope.boltHost = $window.location.host)
+            .catch(
+              (r)->
+                $scope.boltHost = $window.location.host)
+          )
+          .then(->
+            CurrentUser.init()
+            AuthService.hasValidAuthorization(retainConnection = yes).then(
+              ->
+                Frame.closeWhere "#{Settings.cmdchar}server connect"
+                Frame.create({input:"#{Settings.initCmd}"})
+                onboardingSequence() if Settings.onboarding
+              ,
+              (r) ->
+                if Settings.onboarding then onboardingSequence()
+                else Frame.create({input:"#{Settings.cmdchar}server connect"})
+            )
           )
 
         pickFirstFrame()
